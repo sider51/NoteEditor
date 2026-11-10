@@ -71,15 +71,65 @@
     const candidateVisualLane = getRuntimeVisualLane(candidate);
     const atTick=[...(chart.notes||[]).filter(n=>n.tick===tick && !(ignoredIds && ignoredIds.has(n.id))),
       ...pendingNotes.filter(n=>n.tick===tick)];
-    if(type==='scramble') return atTick.some(n=>n.type==='scramble') || atTick.filter(n=>n.type!=='scramble').length>=6;
+    if(type==='scramble') return atTick.length>0;
+    if(atTick.some(n=>n.type==='scramble')) return true;
     if(atTick.some(n=>n.type!=='scramble' && getRuntimeVisualLane(n)===candidateVisualLane)) return true;
-    return atTick.some(n=>n.type==='scramble') && atTick.filter(n=>n.type!=='scramble').length>=5;
+    return false;
+  }
+
+  function applyGimmickEdit(mutator, tick, preserve){
+    const original=JSON.parse(JSON.stringify(chart.notes));
+    const proposed=JSON.parse(JSON.stringify(chart.notes));
+    const baselineTimeline=new Set(PairFlipRules.timeline(original).errors);
+    const baselineValidation=new Set(validateGimmickNotes(original));
+    const result=mutator(proposed);
+    if(result===false) return false;
+    const oldById=new Map(original.map(n=>[n.id,n]));
+    const editedIds=proposed.filter(n=>oldById.has(n.id)&&JSON.stringify(n)!==JSON.stringify(oldById.get(n.id))).map(n=>n.id);
+    const errors=(preserve ? PairFlipRules.preserveLater(original,proposed,tick,editedIds) : PairFlipRules.timeline(proposed).errors)
+      .filter(issue=>!baselineTimeline.has(issue));
+    if(errors.length){showAppMessage(errors[0]);return false;}
+    const validation=validateGimmickNotes(proposed).filter(issue=>!baselineValidation.has(issue));
+    if(validation.length){showAppMessage(validation[0]);return false;}
+    pushHistory();chart.notes=proposed;
+    rebuildLaneStates();resizeCanvas();draw();updateNoteCounts();updateInspector();updateFooterCounts();
+    return true;
+  }
+
+  function placePair(tick,firstLane,secondLane,preserve){
+    if(firstLane===secondLane) return false;
+    const id=nextId();
+    const ok=applyGimmickEdit(notes=>notes.push(
+      {id,tick,lane:firstLane,type:'pair_swap',size:1},
+      {id:id+1,tick,lane:secondLane,type:'pair_swap',size:1}
+    ),tick,preserve);
+    if(ok){clearSelection();selectedIds.add(id);selectedIds.add(id+1);updateInspector();draw();}
+    return ok;
+  }
+
+  function placeFlip(tick,lane,direction,steps,preserve){
+    const id=nextId();
+    const ok=applyGimmickEdit(notes=>notes.push({id,tick,lane,type:'flip',direction,steps,size:1}),tick,preserve);
+    if(ok){selectOnly(id);updateInspector();draw();}
+    return ok;
+  }
+
+  function changeSelectedFlips(direction,steps){
+    const targets=(chart.notes||[]).filter(n=>selectedIds.has(n.id)&&n.type==='flip');
+    if(!targets.length)return;
+    const tick=Math.min(...targets.map(n=>n.tick));
+    applyGimmickEdit(notes=>notes.forEach(n=>{if(selectedIds.has(n.id)&&n.type==='flip'){n.direction=direction;n.steps=steps;}}),tick,!!el.preserveVisualToggle?.checked);
   }
 
   // flagsは使わなくなったから削除しておいたよ
-  function placeNote(type, tick, lane){
+  function placeNote(type, tick, lane, preserve=false){
     if (!isValidPlacement(type, lane)) return null;
     if (isNoteOccupied(tick, lane, type)) return null;
+    if(type==='scramble'){
+      const id=nextId();
+      if(!applyGimmickEdit(notes=>notes.push({id,tick,lane:6,type,size:1}),tick,preserve))return null;
+      selectOnly(id);updateInspector();return chart.notes.find(n=>n.id===id);
+    }
     pushHistory();
     const n = { id: nextId(), tick, lane, type, size:1 };
     if(type==='hold' || type==='shift'){ n.endTick = tick + snapTicks()*MIN_HOLD_LEN_UNITS; }
@@ -90,6 +140,12 @@
   }
 
   function deleteNoteById(id){
+    const target=chart.notes.find(n=>n.id===id);
+    if(target && ['pair_swap','flip','scramble'].includes(target.type)){
+      const ids=target.type==='pair_swap'?chart.notes.filter(n=>n.type==='pair_swap'&&n.tick===target.tick).map(n=>n.id):[id];
+      if(applyGimmickEdit(notes=>{for(let i=notes.length-1;i>=0;i--)if(ids.includes(notes[i].id))notes.splice(i,1);},target.tick,!!el.preserveVisualToggle?.checked))ids.forEach(i=>selectedIds.delete(i));
+      return;
+    }
     pushHistory();
     chart.notes = chart.notes.filter(n=>n.id!==id);
     selectedIds.delete(id);
@@ -98,6 +154,14 @@
 
   function deleteSelected(){
     if(selectedIds.size===0) return;
+    const ids=new Set(selectedIds);
+    for(const n of chart.notes)if(ids.has(n.id)&&n.type==='pair_swap')chart.notes.filter(p=>p.type==='pair_swap'&&p.tick===n.tick).forEach(p=>ids.add(p.id));
+    const gimmicks=chart.notes.filter(n=>ids.has(n.id)&&['pair_swap','flip','scramble'].includes(n.type));
+    if(gimmicks.length){
+      const tick=Math.min(...gimmicks.map(n=>n.tick));
+      if(!applyGimmickEdit(notes=>{for(let i=notes.length-1;i>=0;i--)if(ids.has(notes[i].id))notes.splice(i,1);},tick,!!el.preserveVisualToggle?.checked))return;
+      clearSelection();return;
+    }
     pushHistory();
     chart.notes = chart.notes.filter(n=>!selectedIds.has(n.id));
     clearSelection();
@@ -120,28 +184,32 @@
 
   function commitPaste() {
     if(!drag || drag.mode!=='paste' || !drag.items) return;
-    pushHistory();
-    const newIds = [];
+    const proposed=JSON.parse(JSON.stringify(chart.notes)),newIds=[];
+    let failure='';
     drag.items.forEach(item => {
+      if(failure)return;
       const t = drag.snapTick + item.dTick;
       const rawLane = getPasteDestinationLane(item, drag.lane, drag.sourceAnchorLane, drag.flipped);
-      if(t < 0) return;
-      if (!isValidPlacement(item.type, item.type === 'scramble' ? 6 : rawLane)) return;
-      const newId = nextId();
+      if(t < 0 || !isValidPlacement(item.type, item.type === 'scramble' ? 6 : rawLane)){failure='貼り付け先のTickまたはレーンが不正です。';return;}
+      const newId = Math.max(0,...proposed.map(n=>n.id))+1;
       const l = getInternalLaneForNewNote(rawLane, item.type, t, newId);
-      if (!isValidPlacement(item.type, l)) return;
-      if (isNoteOccupied(t, l, item.type)) return;
+      if (!isValidPlacement(item.type, l)){failure='貼り付け先の論理レーンが不正です。';return;}
       
       const n = { id: newId, tick: t, lane: l, type: item.type, size: item.size || 1 };
       if(item.dEndTick != null) {
         n.endTick = drag.snapTick + item.dEndTick;
       }
-      if(doesHoldCrossScramble(n.type, n.tick, n.endTick)) return;
-      if(item.mutatorData) n.mutatorData = JSON.parse(JSON.stringify(item.mutatorData));
+      if(doesHoldCrossScramble(n.type, n.tick, n.endTick)){failure='Hold / Shift が Scramble をまたぎます。';return;}
+      if(item.direction) n.direction = drag.flipped ? (item.direction==='left'?'right':'left') : item.direction;
+      if(item.steps!=null) n.steps=item.steps;
+      if(item.mutatorData) n.mutatorData=JSON.parse(JSON.stringify(item.mutatorData));
       
-      chart.notes.push(n);
+      proposed.push(n);
       newIds.push(n.id);
     });
+    const errors=failure?[failure]:validateGimmickNotes(proposed);
+    if(errors.length){showAppMessage(errors[0]);return;}
+    pushHistory();chart.notes=proposed;
     drag = null;
     clearSelection();
     newIds.forEach(id => selectedIds.add(id));
@@ -152,80 +220,32 @@
   }
 
   async function runSwapSimulator() {
-    if (!chart || !Array.isArray(chart.notes)) return;
-    const crossingHold = findHoldCrossingScramble();
-    if(crossingHold){
-      showAppMessage(`ID ${crossingHold.id} の${crossingHold.type.toUpperCase()}がSCRAMBLEをまたいでいます。先に譜面を修正してください。`);
-      return;
-    }
-    const invalidPlacement = findInvalidNotePlacement();
-    if(invalidPlacement){
-      showAppMessage(`ID ${invalidPlacement.id} の${invalidPlacement.type.toUpperCase()}は、このレーンへ配置できません。先に譜面を修正してください。`);
-      return;
-    }
-    const message = `この譜面を「Swap Visualize ONの見た目で作成された譜面」として、ゲームで同じ見た目になる内部レーンへ変換します。\n\nこの操作はUndoで元に戻せます。実行しますか？`;
-    if (!await showAppConfirm(message,'Swap Simulator','変換する')) return;
-
-    const nextLanes = new Map();
-    let mapping = createLaneMapping();
-    const notesByTick = new Map();
-    chart.notes.forEach(n => {
-      if(!notesByTick.has(n.tick)) notesByTick.set(n.tick, []);
-      notesByTick.get(n.tick).push(n);
-    });
-    const ticks = [...notesByTick.keys()].sort((a,b)=>a-b);
+    if(!chart)return;
+    if(!await showAppConfirm('現在の物理レーン番号で作った譜面を、v2 の論理レーン番号へ変換します。Undo で戻せます。','Lane Simulator','変換する'))return;
+    const proposed=JSON.parse(JSON.stringify(chart.notes));
+    let slots=PairFlipRules.normal();
+    const ticks=[...new Set(proposed.map(n=>n.tick))].sort((a,b)=>a-b);
     for(const tick of ticks){
-      const notesAtTick = notesByTick.get(tick).slice().sort(compareGameOrder);
-      const gimmicks = notesAtTick.filter(n => n.type === 'swap' || n.type === 'scramble');
-      const normalNotes = notesAtTick.filter(n => n.type !== 'swap' && n.type !== 'scramble');
-
-      // Same-tick notes intentionally use the mapping before any gimmick at
-      // this tick. The gimmicks below only change later ticks.
-      normalNotes.forEach(n => {
-        nextLanes.set(n.id, mapping[mappingNameForType(n.type)][n.lane]);
-      });
-
-      for(const gimmick of gimmicks){
-        if(gimmick.type === 'scramble' && gimmick.lane !== 6){
-          showAppMessage(`ID ${gimmick.id} のSCRAMBLEは7レーンに配置してください。変換を中止しました。`);
-          return;
-        }
-        nextLanes.set(gimmick.id, gimmick.type === 'scramble' ? 6 : mapping.normal[gimmick.lane]);
+      const group=proposed.filter(n=>n.tick===tick);
+      for(const n of group)if(n.type!=='scramble'){
+        if(!PairFlipRules.isLane(n.lane)){showAppMessage(`ID ${n.id}: レーンが不正です。`);return;}
+        n.lane=slots[n.lane];
       }
-
-      const outputGimmicks = gimmicks.slice().sort((a,b) => {
-        const laneDiff = nextLanes.get(a.id) - nextLanes.get(b.id);
-        return laneDiff || a.id - b.id;
-      });
-      if(outputGimmicks.some(g=>g.type === 'scramble')) applyScrambleMapping(mapping);
-      else if(outputGimmicks.some(g=>g.type === 'swap' && nextLanes.get(g.id)===0) && outputGimmicks.some(g=>g.type === 'swap' && nextLanes.get(g.id)===5)) swapVisualPositions(mapping,2,3,'normal');
-      else outputGimmicks.forEach(gimmick => applySwapMapping(mapping, nextLanes.get(gimmick.id)));
-
+      const result=PairFlipRules.step(slots,group.filter(n=>['pair_swap','flip','scramble'].includes(n.type)),tick);
+      if(result.errors.length){showAppMessage(result.errors[0]);return;}
+      slots=result.after;
     }
-
-    pushHistory();
-    let changed = 0;
-    chart.notes.forEach(n => {
-      const originalLane = n.lane;
-      const mappedLane = nextLanes.get(n.id);
-      if (mappedLane !== originalLane) {
-        n.lane = mappedLane;
-        changed++;
-      }
-    });
-
-    rebuildLaneStates();
-    updateNoteCounts();
-    updateInspector();
-    resizeCanvas();
-    draw();
-    showAppToast(`${changed} 件のノーツを変換しました`);
+    const issues=validateGimmickNotes(proposed);if(issues.length){showAppMessage(issues[0]);return;}
+    pushHistory();chart.notes=proposed;rebuildLaneStates();resizeCanvas();draw();updateNoteCounts();updateInspector();showAppToast('論理レーンへ変換しました。');
   }
 
   function mirrorSelected() {
     if(selectedIds.size === 0) return;
+    for(const n of chart.notes)if(selectedIds.has(n.id)&&n.type==='pair_swap')chart.notes.filter(p=>p.type==='pair_swap'&&p.tick===n.tick).forEach(p=>selectedIds.add(p.id));
+    const before=JSON.parse(JSON.stringify(chart.notes));
     pushHistory();
     const occupied = new Set();
+    let rejected=false;
     chart.notes.forEach(n => {
       if(selectedIds.has(n.id)) {
         const visualLane = getVisualLane(n);
@@ -234,11 +254,14 @@
         const position = notePositionKey(n.tick, getRuntimeVisualLane({tick:n.tick, lane:mirroredLane, type:n.type}));
         if(isValidPlacement(n.type, mirroredLane) && !isNoteOccupied(n.tick, mirroredLane, n.type, selectedIds) && !occupied.has(position)) {
           n.lane = mirroredLane;
+          if(n.type==='flip')n.direction=n.direction==='left'?'right':'left';
           occupied.add(position);
-        }
+        } else rejected=true;
       }
     });
     if(isSwapVisualizeMode) rebuildLaneStates();
+    const errors=validateGimmickNotes(chart.notes);
+    if(errors.length||rejected){chart.notes=before;history.pop();showAppMessage(errors[0]||'左右反転先のレーンが競合しています。');rebuildLaneStates();draw();return;}
     updateInspector();
     draw();
   }

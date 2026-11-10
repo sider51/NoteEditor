@@ -28,7 +28,7 @@
 
   function updateNoteCounts(){
     const notes = chart.notes||[];
-    const counts = {tap:0,hold:0,trace:0,swap:0,shift:0,scramble:0};
+    const counts = {tap:0,hold:0,trace:0,pair_swap:0,flip:0,shift:0,scramble:0};
     notes.forEach(n=>{ if(counts[n.type]!=null) counts[n.type]++; });
     el.noteCounts.innerHTML = Object.keys(TYPE_META).map(t=>`
       <div class="count-item"><span class="sw" style="background:${TYPE_META[t].color}"></span>${TYPE_META[t].label}<span class="n">${counts[t]}</span></div>
@@ -47,14 +47,17 @@
       return;
     }
     if(selectedIds.size>1){
+      const flips=(chart.notes||[]).filter(n=>selectedIds.has(n.id)&&n.type==='flip');
       el.inspector.innerHTML = `
         <div class="note-card">
           <div class="stat-row"><span class="k">選択中</span><span class="v">${selectedIds.size} 件</span></div>
+          ${flips.length?`<div class="stat-row">Flip ${flips.length} 件を一括変更</div><select id="inspFlipDirection"><option value="right">右</option><option value="left">左</option></select><input id="inspFlipSteps" type="number" min="1" max="5" value="1"><button id="inspFlipApply">適用</button>`:''}
           <button class="del-btn" id="inspDeleteMulti">選択したノーツを削除</button>
 <button id="inspMirrorMulti" style="margin-top:8px; width:100%;">左右反転 (M)</button>
         </div>`;
       document.getElementById('inspDeleteMulti').addEventListener('click', deleteSelected);
       document.getElementById('inspMirrorMulti').addEventListener('click', mirrorSelected);
+      if(flips.length)document.getElementById('inspFlipApply').addEventListener('click',()=>changeSelectedFlips(document.getElementById('inspFlipDirection').value,Number(document.getElementById('inspFlipSteps').value)));
       return;
     }
     const id = [...selectedIds][0];
@@ -70,10 +73,12 @@
         <div class="stat-row"><span class="k">Lane</span><span class="v">${n.lane}</span></div>
         ${n.type==='hold' || n.type==='shift' ? `<div class="stat-row"><span class="k">EndTick</span><span class="v">${n.endTick}</span></div>
         <div class="stat-row"><span class="k">長さ</span><span class="v">${n.endTick-n.tick} tick</span></div>` : ''}
+        ${n.type==='flip'?`<div class="stat-row"><span class="k">移動</span><span class="v"><select id="inspFlipDirection"><option value="right" ${n.direction==='right'?'selected':''}>右</option><option value="left" ${n.direction==='left'?'selected':''}>左</option></select><input id="inspFlipSteps" type="number" min="1" max="5" value="${n.steps}"><button id="inspFlipApply">適用</button></span></div>`:''}
         <button class="del-btn" id="inspDelete">このノーツを削除</button>
       </div>
     `;
     document.getElementById('inspDelete').addEventListener('click', ()=>deleteNoteById(n.id));
+    if(n.type==='flip')document.getElementById('inspFlipApply').addEventListener('click',()=>changeSelectedFlips(document.getElementById('inspFlipDirection').value,Number(document.getElementById('inspFlipSteps').value)));
   }
 
   function escapeHtml(s){

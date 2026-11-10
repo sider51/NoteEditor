@@ -122,6 +122,20 @@
     if (audio) audio.playbackRate = parseFloat(el.playbackRateSelect.value);
   });
   el.swapVisualizeToggle.addEventListener('change', (e) => setSwapVisualize(e.target.checked));
+  let preserveVisualPinned=!!el.preserveVisualToggle.checked;
+  let shiftPreserveHeld=false;
+  function shiftCanPreserve(){return pointerMode==='place'&&['pair_swap','scramble','flip'].includes(selectedType);}
+  function syncPreserveVisualToggle(){
+    const temporary=shiftPreserveHeld&&shiftCanPreserve();
+    el.preserveVisualToggle.checked=preserveVisualPinned||temporary;
+    el.preserveVisualToggle.closest('.preserve-control')?.classList.toggle('temporary',temporary&&!preserveVisualPinned);
+    el.preserveVisualToggle.title=temporary&&!preserveVisualPinned?'Shiftを押している間だけ有効':'後続の見た目を維持';
+  }
+  el.preserveVisualToggle.addEventListener('change',e=>{preserveVisualPinned=e.target.checked;syncPreserveVisualToggle();});
+  window.addEventListener('keydown',e=>{if(e.key==='Shift'){shiftPreserveHeld=true;syncPreserveVisualToggle();}},true);
+  window.addEventListener('keyup',e=>{if(e.key==='Shift'){shiftPreserveHeld=false;syncPreserveVisualToggle();}},true);
+  window.addEventListener('blur',()=>{shiftPreserveHeld=false;syncPreserveVisualToggle();});
+  syncPreserveVisualToggle();
   el.timelineInvertToggle.addEventListener('change', (e) => setTimelineInverted(e.target.checked));
   el.settingsClose.addEventListener('click', closeSettingsModal);
   el.settingsModalOverlay.addEventListener('click', (e)=>{ if(e.target===el.settingsModalOverlay) closeSettingsModal(); });
@@ -157,14 +171,17 @@
 
   el.typeButtons.forEach(btn=>{
     btn.addEventListener('click', ()=>{
+      pendingGimmick=null;
       selectedType = btn.dataset.type;
       el.typeButtons.forEach(b=>b.classList.toggle('active', b===btn));
+      syncPreserveVisualToggle();
     });
   });
   el.modeButtons.forEach(btn=>{
     btn.addEventListener('click', ()=>{
       pointerMode = btn.dataset.mode;
       el.modeButtons.forEach(b=>b.classList.toggle('active', b===btn));
+      syncPreserveVisualToggle();
       renderHints();
       drag = null;
       draw();
@@ -178,9 +195,31 @@
     ).join('');
   }
   renderHints();
+  window.addEventListener('message',event=>{
+    if(event.origin!==location.origin || event.data?.kind!=='noteeditor-v1-selection') return;
+    const notes=event.data.notes;
+    if(!chart || !Array.isArray(notes)) return;
+    const allowed=notes.filter(n=>['tap','trace','hold','shift','scramble'].includes(n.type));
+    if(!allowed.length) return;
+    const base=Math.min(...allowed.map(n=>n.tick));
+    const anchor=allowed[0].lane;
+    clipboard=allowed.map(n=>({...n,visualLane:n.lane,dTick:n.tick-base,dEndTick:n.endTick==null?null:n.endTick-base,dVisualLane:n.lane-anchor}));
+    beginPasteFromClipboard();
+    showAppMessage(`${allowed.length} 件を受信しました。貼り付け先を選んでください。旧Swap ${event.data.excluded||0} 件は除外しました。`);
+  });
+  if(typeof require==='function'){
+    try{require('electron').ipcRenderer.on('legacy-selection',(_,payload)=>{
+      const notes=(payload.notes||[]).filter(n=>['tap','trace','hold','shift','scramble'].includes(n.type));
+      if(!chart||!notes.length)return;
+      const base=Math.min(...notes.map(n=>n.tick)),anchor=notes[0].lane;
+      clipboard=notes.map(n=>({...n,visualLane:n.lane,dTick:n.tick-base,dEndTick:n.endTick==null?null:n.endTick-base,dVisualLane:n.lane-anchor}));
+      beginPasteFromClipboard();showAppMessage(`${notes.length} 件を受信しました。貼り付け先を選んでください。`);
+    });}catch{}
+  }
 
   function copySelectionToClipboard(){
     if(!chart || selectedIds.size===0) return;
+    for(const n of chart.notes)if(selectedIds.has(n.id)&&n.type==='pair_swap')chart.notes.filter(p=>p.type==='pair_swap'&&p.tick===n.tick).forEach(p=>selectedIds.add(p.id));
     const sel=Array.from(selectedIds).map(id=>chart.notes.find(n=>n.id===id)).filter(Boolean)
       .map(note=>({note,visualLane:getVisualLane(note)}));
     sel.sort((a,b)=>a.note.tick-b.note.tick || a.visualLane-b.visualLane || a.note.id-b.note.id);
@@ -237,10 +276,11 @@
     if(e.key==='1'){ selectType('tap'); }
     else if(e.key==='2'){ selectType('hold'); }
     else if(e.key==='3'){ selectType('trace'); }
-    else if(e.key==='4'){ selectType('swap'); }
+    else if(e.key==='4'){ selectType('pair_swap'); }
     else if(e.key==='5'){ selectType('shift'); }
     else if(e.key==='6'){ selectType('scramble'); }
-    else if(e.key==='Escape'){ clearSelection(); draw(); updateInspector(); }
+    else if(e.key==='7'){ selectType('flip'); }
+    else if(e.key==='Escape'){ pendingGimmick=null;clearSelection(); draw(); updateInspector(); }
     else if(e.key==='Delete' || e.key==='Backspace'){
       if(selectedIds.size>0){ e.preventDefault(); deleteSelected(); }
     }
@@ -274,8 +314,10 @@
   });
 
   function selectType(t){
+    pendingGimmick=null;
     selectedType = t;
     el.typeButtons.forEach(b=>b.classList.toggle('active', b.dataset.type===t));
+    syncPreserveVisualToggle();
   }
 
   function setZoom(z, opts){

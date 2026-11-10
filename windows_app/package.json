@@ -23,7 +23,8 @@
       "../index.html",
       "../converter.html",
       "../css/**/*",
-      "../js/**/*"
+      "../js/**/*",
+      "../old-editor/**/*"
     ]
   },
   "devDependencies": {

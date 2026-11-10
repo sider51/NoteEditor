@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NoteEditor</title>
 <!-- アイコンライブラリ（Material Symbols）の読み込み -->
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
+<link href="js/vendor/material-symbols.css" rel="stylesheet" />
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -44,14 +44,14 @@
           <button id="btnTiming" disabled>BPM・Scroll</button>
           <div class="menu-separator"></div>
           <button data-command="syntax">構文チェック</button>
-          <button data-command="simulator">Swap Simulator</button>
+          <button data-command="simulator">Lane Simulator</button>
         </div>
       </div>
       <div class="menu-shell">
         <button id="btnViewMenu" class="menu-trigger" aria-haspopup="true" aria-expanded="false" aria-controls="viewMenu">表示</button>
         <div class="app-menu" id="viewMenu" hidden>
           <button data-command="inspector">情報パネルを開閉</button>
-          <button data-command="swap-visualize">Swap Visualize</button>
+          <button data-command="swap-visualize">Lane Visualize</button>
           <button data-command="invert">譜面を上下反転</button>
           <button data-command="zoom-in">拡大</button>
           <button data-command="zoom-out">縮小</button>
@@ -83,11 +83,13 @@
       <button class="type-btn active" data-type="tap"><span class="dot" style="background:var(--tap)"></span>TAP<kbd>1</kbd></button>
       <button class="type-btn" data-type="hold"><span class="dot" style="background:var(--hold)"></span>HOLD<kbd>2</kbd></button>
       <button class="type-btn" data-type="trace"><span class="dot" style="background:var(--trace)"></span>TRACE<kbd>3</kbd></button>
-      <button class="type-btn" data-type="swap"><span class="dot" style="background:var(--swap)"></span>SWAP<kbd>4</kbd></button>
+      <button class="type-btn" data-type="pair_swap"><span class="dot" style="background:var(--swap)"></span>PAIR<kbd>4</kbd></button>
       <button class="type-btn" data-type="shift"><span class="dot" style="background:var(--shift)"></span>SHIFT<kbd>5</kbd></button>
       <button class="type-btn" data-type="scramble"><span class="dot" style="background:var(--scramble)"></span>SCRAMBLE<kbd>6</kbd></button>
+      <button class="type-btn" data-type="flip"><span class="dot" style="background:var(--flip)"></span>FLIP<kbd>7</kbd></button>
     </div>
     <div class="spacer"></div>
+    <label class="preserve-control"><input type="checkbox" id="preserveVisualToggle">後続の見た目を維持</label>
     <label class="snap-control">SNAP<select id="snapSelect"></select></label>
     <div class="zoom-group" role="group" aria-label="ズーム">
       <button id="zoomOut" class="icon-button" title="縮小" aria-label="縮小"><span class="material-symbols-outlined">remove</span></button>
@@ -229,7 +231,7 @@
       <label class="toggle-row">
         <input type="checkbox" id="swapVisualizeToggle">
         <span>SWAP VISUALIZE</span>
-        <small>SWAP / SCRAMBLE後のレーン位置でノーツを表示・配置します。</small>
+        <small>Pair / Flip / Scramble 後のレーン位置でノーツを表示・配置します。</small>
       </label>
       <label class="toggle-row">
         <input type="checkbox" id="timelineInvertToggle">
@@ -239,8 +241,8 @@
       </section>
       <section class="settings-pane">
       <h3>検証と変換</h3>
-      <p class="modal-help">SWAP適用後の見た目で作成してしまった譜面を、ゲームで同じ見た目になる元レーン配置へ変換します。</p>
-      <button id="btnSwapSimulator" class="danger-outline"><span class="material-symbols-outlined">swap_horiz</span>SWAP SIMULATORを実行</button>
+      <p class="modal-help">物理レーン番号で作成した譜面を、v2 の論理レーン番号へ変換します。</p>
+      <button id="btnSwapSimulator" class="danger-outline"><span class="material-symbols-outlined">swap_horiz</span>LANE SIMULATORを実行</button>
       <button id="btnSyntaxCheck"><span class="material-symbols-outlined">fact_check</span>構文チェック</button>
       <div id="validationResults" class="validation-results" role="status" aria-live="polite">構文チェックを実行すると結果を表示します。</div>
       </section>
@@ -282,8 +284,9 @@
 </div>
 <div id="appToast" class="app-toast" role="status" aria-live="polite"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="js/vendor/package/dist/jszip.min.js"></script>
 <script src="js/chart_format.js"></script>
+<script src="js/gimmicks.js"></script>
 <script src="js/config.js"></script>
 <script src="js/dialogs.js"></script>
   <script src="js/state.js"></script>

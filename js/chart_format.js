@@ -74,14 +74,18 @@
     const offset = Number(audio.offset);
     const resolution = Number(source.resolution);
     const gridOffset = normalizeGridOffset(source.grid_offset);
-    return {
+    const result = {
+      ...cloneJson(source),
       charter: typeof source.charter === 'string' ? source.charter : '',
-      difficulty: { level: Number.isFinite(level) ? level : 1 },
-      audio: { offset: Number.isFinite(offset) ? offset : 0 },
+      difficulty: { ...cloneJson(difficulty), level: Number.isFinite(level) ? level : 1 },
+      audio: { ...cloneJson(audio), offset: Number.isFinite(offset) ? offset : 0 },
       grid_offset: gridOffset,
       laneCount: 7,
       resolution: Number.isInteger(resolution) && resolution > 0 ? resolution : 960,
     };
+    delete result.id; delete result.title; delete result.artist;
+    delete result.difficulty.name;
+    return result;
   }
 
   function createChartExport(chart){
@@ -92,7 +96,7 @@
     notes.sort((a,b) => (a.tick || 0) - (b.tick || 0) || (a.lane || 0) - (b.lane || 0) || (a.id || 0) - (b.id || 0));
     events.sort((a,b) => (a.tick || 0) - (b.tick || 0));
     return {
-      version: 1,
+      version: 2,
       metadata: normalizeMetadata(source.metadata),
       timing,
       notes,

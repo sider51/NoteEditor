@@ -9,6 +9,12 @@
   el.gridCanvas.addEventListener('mousedown', (e)=>{
     if(e.button!==0) return;
     const x=e.offsetX, y=e.offsetY + (el.scrollWrap ? el.scrollWrap.scrollTop : 0);
+    for(const n of (chart?.notes||[]))if(n.type==='flip' && selectedIds.has(n.id)){
+      const route=flipDisplayRoute(n);
+      if(route && Math.abs(y-tickToY(n.tick))<12 && Math.abs(x-(laneToX(route.toDisplay)+LANE_W/2))<18){
+        drag={mode:'flip-target',id:n.id,targetSlot:route.toDisplay};return;
+      }
+    }
     const waveformLeft = laneToX(laneCount) + 30;
     if(x >= waveformLeft && x <= waveformLeft + 80){
       seekAudioToTick(yToTick(y));
@@ -23,6 +29,27 @@
         seekAudioToTick(yToTick(y));
       }
       return;
+    }
+
+    if(pointerMode==='place' && (selectedType==='pair_swap' || selectedType==='flip')){
+      const tick=snapTick(yToTick(y)),slot=xToLane(x);
+      if(slot<0 || slot>5)return;
+      if(!pendingGimmick || pendingGimmick.type!==selectedType || pendingGimmick.tick!==tick){
+        pendingGimmick={type:selectedType,tick,slot};
+        draw();return;
+      }
+      if(slot===pendingGimmick.slot)return;
+      const first=getInternalLaneForNewNote(pendingGimmick.slot,selectedType,tick);
+      const second=getInternalLaneForNewNote(slot,selectedType,tick);
+      const preserve=!!(e.shiftKey||el.preserveVisualToggle?.checked);
+      if(selectedType==='pair_swap')placePair(tick,first,second,preserve);
+      else {
+        rebuildLaneStates();
+        const mapping=getLaneMappingBeforeTick(tick).normal;
+        const from=mapping.indexOf(first),to=mapping.indexOf(second);
+        placeFlip(tick,first,to<from?'left':'right',Math.abs(to-from),preserve);
+      }
+      pendingGimmick=null;draw();return;
     }
 
     let hit = hitTest(x,y);
@@ -59,7 +86,9 @@
     } else {
       // placement mode
       if(hit){
+        if(hit.note.type==='pair_swap')chart.notes.filter(n=>n.type==='pair_swap'&&n.tick===hit.note.tick).forEach(n=>selectedIds.add(n.id));
         selectOnly(hit.note.id);
+        if(hit.note.type==='pair_swap')chart.notes.filter(n=>n.type==='pair_swap'&&n.tick===hit.note.tick).forEach(n=>selectedIds.add(n.id));
         updateInspector();
         if((hit.note.type==='hold' || hit.note.type==='shift') && hit.zone==='end'){
           drag = {mode:'resize-hold', note:hit.note, originalEndTick:hit.note.endTick, snapshotTaken:false};
@@ -78,12 +107,13 @@
         drag = { mode:'create-hold', type: selectedType, lane, startTick:tick, currentTick:tick+snapTicks() };
         draw();
       } else {
-        placeNote(selectedType, tick, lane);
+        placeNote(selectedType, tick, lane,!!(e.shiftKey||el.preserveVisualToggle?.checked));
       }
     }
   });
 
   function beginGroupDrag(x,y,grabNote){
+    if(grabNote.type==='pair_swap')chart.notes.filter(n=>n.type==='pair_swap'&&n.tick===grabNote.tick).forEach(n=>selectedIds.add(n.id));
     const items = new Map();
     selectedIds.forEach(id=>{
       const n = chart.notes.find(n=>n.id===id);
@@ -93,6 +123,7 @@
       mode:'group-move', snapshotTaken:false,
       grabStartTick: grabNote.tick, grabStartLane: grabNote.lane, grabRawLane: getVisualLane(grabNote, grabNote.tick),
       items
+      ,beforeNotes:JSON.parse(JSON.stringify(chart.notes)),preserve:!!el.preserveVisualToggle?.checked
     };
   }
 
@@ -124,6 +155,10 @@
     }
 
     if(drag){
+      if(drag.mode==='flip-target'){
+        drag.targetSlot=Math.max(0,Math.min(5,xToLane(x)));
+        draw();return;
+      }
       if(drag.mode==='rect-select'){
         drag.x1 = x; drag.y1 = y;
         draw();
@@ -138,6 +173,7 @@
       } else if(drag.mode==='resize-hold'){
         drag.note.endTick = Math.max(drag.note.tick+snapTicks(), tick);
       } else if(drag.mode==='group-move'){
+        drag.rejected=false;
         const currentRawLane = xToLane(x);
         const startRawLane = drag.grabRawLane !== undefined ? drag.grabRawLane : currentRawLane; 
         const deltaLane = drag.grabRawLane === 6 ? 0 : currentRawLane - startRawLane;
@@ -155,10 +191,6 @@
 
           if (n.type === 'scramble') {
             targetLane = 6;
-          } else if (n.type === 'swap') {
-            if (![0, 5].includes(targetLane)) {
-              targetLane = [0, 5].reduce((prev, curr) => Math.abs(curr - targetLane) < Math.abs(prev - targetLane) ? curr : prev);
-            }
           }
           const positionKey = notePositionKey(targetTick, getRuntimeVisualLane({tick:targetTick, lane:targetLane, type:n.type}));
           const targetEndTick = (n.type==='hold' || n.type==='shift') && orig.endTick!=null ? targetTick + (orig.endTick-orig.tick) : n.endTick;
@@ -170,7 +202,7 @@
             if((n.type==='hold' || n.type==='shift') && orig.endTick!=null){
               n.endTick = targetEndTick;
             }
-          }
+          } else drag.rejected=true;
         });
       }
       resizeCanvas();
@@ -182,6 +214,24 @@
 
   window.addEventListener('mouseup', ()=>{
     if(!drag) return;
+    if(drag.mode==='flip-target'){
+      const n=chart.notes.find(n=>n.id===drag.id);
+      if(n){
+        const mapping=getLaneMappingBeforeTick(n.tick).normal;
+        const from=mapping.indexOf(n.lane);
+        const targetLogical=isSwapVisualizeMode?mapping[drag.targetSlot]:drag.targetSlot;
+        const to=mapping.indexOf(targetLogical);
+        if(from!==to)changeSelectedFlips(to<from?'left':'right',Math.abs(to-from));
+      }
+      drag=null;draw();return;
+    }
+    if(drag.mode==='group-move' && drag.snapshotTaken){
+      const moved=chart.notes.filter(n=>drag.items.has(n.id)&&['pair_swap','flip','scramble'].includes(n.type));
+      const tick=Math.min(...moved.map(n=>n.tick),...Array.from(drag.items.values()).map(n=>n.tick));
+      const errors=drag.preserve&&moved.length?PairFlipRules.preserveLater(drag.beforeNotes,chart.notes,tick,[...drag.items.keys()]):validateGimmickNotes(chart.notes);
+      const allErrors=drag.rejected?['選択ノーツの一部を移動できません。操作を取り消しました。']:errors.length?errors:validateGimmickNotes(chart.notes);
+      if(allErrors.length){chart.notes=drag.beforeNotes;history.pop();rebuildLaneStates();showAppMessage(allErrors[0]);}
+    }
     if(drag.mode==='create-hold'){
       const len = Math.max(snapTicks()*MIN_HOLD_LEN_UNITS, drag.currentTick-drag.startTick);
       const endTick = drag.startTick + len;

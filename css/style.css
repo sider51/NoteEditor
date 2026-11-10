@@ -2,14 +2,14 @@
      テーマ変数定義（デフォルトはダークモード）
   ------------------------------------------------------------- */
   :root {
-    --bg: #0B1016;
-    --panel: #151C25;
-    --panel-raised: #1C2632;
-    --panel-border: #3B4A5D;
+    --bg: #090d14;
+    --panel: #111722;
+    --panel-raised: #1a2230;
+    --panel-border: #334052;
     --text: #F2F6FA;
     --text-dim: #B6C3D2;
     --text-faint: #90A0B2;
-    --accent: #74D9EB;
+    --accent: #92d2e7;
     --grid-beat: #273543;
     --grid-measure: #43546A;
     --lane-alt: #111A23;
@@ -20,6 +20,7 @@
     --hold-fill: rgba(85, 200, 242, 0.26);
     --trace: #B8C5D4;
     --swap: #C49AF7;
+    --flip: #90E2B4;
     --shift: #F3DA75;
     --scramble: #FF887F;
     --danger: #FF887F;
@@ -54,9 +55,15 @@
     line-height:1.4;
   }
 
-  .app-header{background:var(--panel);border-bottom:1px solid var(--panel-border);flex-shrink:0;}
-  .command-bar,.tool-bar{display:flex;align-items:center;gap:8px;padding:8px 16px;min-height:52px;}
-  .tool-bar{background:var(--lane-alt);border-top:1px solid var(--panel-border);min-height:54px;}
+  .app-header{background:var(--panel);border-bottom:1px solid var(--panel-border);flex-shrink:0;box-shadow:0 8px 30px rgba(0,0,0,.22);z-index:10;}
+  .command-bar,.tool-bar{display:flex;align-items:center;gap:10px;padding:9px 20px;min-height:54px;}
+  .tool-bar{background:#101723;border-top:1px solid #273344;min-height:56px;}
+  .preserve-control{display:inline-flex;align-items:center;gap:8px;white-space:nowrap;color:var(--text-dim);font-size:12px;padding:7px 10px;border:1px solid var(--panel-border);border-radius:8px;background:var(--panel);}
+  .preserve-control:has(input:checked){border-color:var(--accent);color:var(--text);background:#173140;}
+  .preserve-control.temporary{border-style:dashed;box-shadow:0 0 0 2px rgba(146,210,231,.12);}
+  .preserve-control input{accent-color:var(--accent);}
+  .note-tools{overflow-x:auto;scrollbar-width:thin;}
+  .type-btn[data-type="flip"].active{border-color:var(--flip);box-shadow:inset 0 0 0 1px var(--flip);}
   .menu-bar{display:flex;align-items:center;gap:2px;flex-shrink:0;}
   .menu-shell{position:relative;}
   .menu-trigger{background:transparent;border-color:transparent;padding-inline:12px;}

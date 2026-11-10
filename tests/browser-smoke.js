@@ -1,5 +1,5 @@
 // Manual integration check: node tests/browser-smoke.js
-// Requires Chrome. Exercises the real page, event editor, inversion, and wave seek.
+// Requires Chrome. Exercises the preserved v1 editor, event editor, inversion, and wave seek.
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -35,7 +35,7 @@ function silentWav(){
 async function main(){
   const port = await freePort();
   const profile = fs.mkdtempSync(path.join(os.tmpdir(),'noteeditor-browser-'));
-  const pageUrl = pathToFileURL(path.join(__dirname,'../index.html')).href;
+  const pageUrl = pathToFileURL(path.join(__dirname,'../old-editor/index.html')).href;
   const electronEnv = {...process.env};
   delete electronEnv.ELECTRON_RUN_AS_NODE;
   const browser = electronPath

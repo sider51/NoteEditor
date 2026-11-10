@@ -115,6 +115,102 @@
   // Note drawing
   // ---------------------------------------------------------------
   function noteColor(type){ return (TYPE_META[type]||{}).color || '#888'; }
+  function flipDisplayRoute(note){
+    const mapping=getLaneMappingBeforeTick(note.tick).normal;
+    const fromPhysical=mapping.indexOf(note.lane);
+    const toPhysical=fromPhysical+(note.direction==='left'?-1:1)*note.steps;
+    if(fromPhysical<0||toPhysical<0||toPhysical>=laneCount)return null;
+    return {
+      fromPhysical,toPhysical,
+      fromDisplay:isSwapVisualizeMode?fromPhysical:note.lane,
+      toDisplay:isSwapVisualizeMode?toPhysical:mapping[toPhysical]
+    };
+  }
+
+  function drawGimmickLinks(visibleNotes){
+    const pairs=new Map();
+    visibleNotes.filter(n=>n.type==='pair_swap').forEach(n=>{
+      if(!pairs.has(n.tick))pairs.set(n.tick,[]);
+      pairs.get(n.tick).push(n);
+    });
+    ctx.save();ctx.lineWidth=2;
+    pairs.forEach(group=>{
+      if(group.length!==2)return;
+      const y=tickToY(group[0].tick),a=laneToX(getVisualLane(group[0]))+LANE_W/2,b=laneToX(getVisualLane(group[1]))+LANE_W/2;
+      ctx.strokeStyle=getVar('--swap');ctx.beginPath();ctx.moveTo(a,y);ctx.lineTo(b,y);ctx.stroke();
+    });
+    for(const n of visibleNotes.filter(note=>note.type==='flip')){
+      const route=flipDisplayRoute(n);if(!route)continue;
+      const y=tickToY(n.tick),x0=laneToX(route.fromDisplay)+LANE_W/2,x1=laneToX(route.toDisplay)+LANE_W/2;
+      const sign=x1>x0?1:-1,color=getVar('--flip');
+      ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;
+      ctx.beginPath();ctx.moveTo(x0,y);ctx.lineTo(x1-sign*8,y);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(x1-sign*7,y);ctx.lineTo(x1-sign*16,y-5);ctx.lineTo(x1-sign*16,y+5);ctx.closePath();ctx.fill();
+      const label=`${n.direction==='left'?'左':'右'}${n.steps}`;
+      ctx.font='bold 11px '+getVar('--sans');
+      const mid=(x0+x1)/2,labelW=ctx.measureText(label).width+10;
+      ctx.fillStyle=getVar('--panel-raised');ctx.fillRect(mid-labelW/2,y-24,labelW,17);
+      ctx.fillStyle=color;ctx.fillText(label,mid-labelW/2+5,y-11);
+      if(selectedIds.has(n.id)){
+        ctx.globalAlpha=.45;ctx.fillStyle=color;ctx.beginPath();ctx.arc(x1,y,11,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
+        ctx.strokeStyle=color;ctx.beginPath();ctx.arc(x1,y,11,0,Math.PI*2);ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawPairPlacementGhost(start,target,y,color){
+    const x0=laneToX(start)+LANE_W/2;
+    ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;
+    if(target!=null&&target>=0&&target<laneCount&&target!==start){
+      const x1=laneToX(target)+LANE_W/2;
+      ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(x0,y);ctx.lineTo(x1,y);ctx.stroke();ctx.setLineDash([]);
+      ctx.globalAlpha=.2;ctx.beginPath();ctx.arc(x1,y,14,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
+      ctx.beginPath();ctx.arc(x1,y,12,0,Math.PI*2);ctx.stroke();
+      ctx.font='bold 11px '+getVar('--sans');ctx.fillText('2',x1-3,y+4);
+    }
+    ctx.globalAlpha=.2;ctx.beginPath();ctx.arc(x0,y,14,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
+    ctx.beginPath();ctx.arc(x0,y,12,0,Math.PI*2);ctx.stroke();
+    ctx.font='bold 11px '+getVar('--sans');ctx.fillText('1',x0-3,y+4);
+    ctx.restore();
+  }
+
+  function drawFlipPlacementGhost(start,target,y,color,steps){
+    const x0=laneToX(start)+LANE_W/2;
+    ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;
+    ctx.globalAlpha=.24;ctx.fillRect(laneToX(start)+7,y-12,LANE_W-14,24);ctx.globalAlpha=1;
+    ctx.strokeRect(laneToX(start)+7,y-12,LANE_W-14,24);
+    ctx.font='bold 11px '+getVar('--sans');ctx.fillText('FLIP',x0-13,y+4);
+    if(target!=null&&target>=0&&target<laneCount&&target!==start){
+      const x1=laneToX(target)+LANE_W/2,sign=x1>x0?1:-1;
+      ctx.globalAlpha=.14;ctx.fillRect(laneToX(target)+6,y-13,LANE_W-12,26);ctx.globalAlpha=1;
+      ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(x0,y);ctx.lineTo(x1-sign*9,y);ctx.stroke();ctx.setLineDash([]);
+      const count=Math.max(1,Math.min(5,steps||1));
+      for(let i=1;i<=count;i++){
+        const x=x0+(x1-x0)*i/(count+1);
+        ctx.beginPath();ctx.moveTo(x+sign*4,y);ctx.lineTo(x-sign*4,y-4);ctx.lineTo(x-sign*4,y+4);ctx.closePath();ctx.fill();
+      }
+      ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x1-sign*10,y-6);ctx.lineTo(x1-sign*10,y+6);ctx.closePath();ctx.fill();
+      ctx.strokeRect(laneToX(target)+6,y-13,LANE_W-12,26);
+    }
+    ctx.restore();
+  }
+
+  function drawScramblePlacementGhost(tick){
+    const y=tickToY(tick),blocked=chart.notes.some(n=>n.tick===tick||(['hold','shift'].includes(n.type)&&n.tick<=tick&&n.endTick>=tick));
+    const color=getVar(blocked?'--danger':'--scramble');
+    ctx.save();ctx.fillStyle=color;ctx.strokeStyle=color;ctx.lineWidth=2;
+    ctx.globalAlpha=.18;ctx.fillRect(RULER_W+4,y-17,laneCount*LANE_W-8,34);ctx.globalAlpha=1;
+    ctx.strokeRect(RULER_W+4,y-17,laneCount*LANE_W-8,34);
+    ctx.font='bold 12px '+getVar('--sans');
+    for(let slot=0;slot<laneCount;slot++){
+      const x=laneToX(slot)+LANE_W/2;
+      ctx.fillText(slot<3?'›':'‹',x-3,y+4);
+    }
+    ctx.fillStyle=getVar('--panel-raised');ctx.fillRect(RULER_W+5,y-46,210,22);
+    ctx.fillStyle=color;ctx.fillText(blocked?'SCRAMBLE · 同Tick / 長押しと競合':'SCRAMBLE · 6レーンを反転',RULER_W+13,y-30);
+    ctx.restore();
+  }
 
   function drawNote(n){
     const visualLane = getVisualLane(n, n.tick);
@@ -153,12 +249,16 @@
       ctx.fillStyle = color + '30';
       ctx.fillRect(x+6,y-NOTE_H/2,drawWidth-12,NOTE_H);
       ctx.strokeRect(x+6,y-NOTE_H/2,drawWidth-12,NOTE_H);
-    } else if(n.type==='swap'){
+    } else if(n.type==='pair_swap' || n.type==='flip'){
       ctx.beginPath();
       ctx.arc(cx, y, NOTE_H/2, 0, Math.PI*2);
-      ctx.fillStyle = 'rgba(255,92,138,0.25)'; // 透明度が必要なため固定値だが、CSS変数を使ってもOK
+      ctx.fillStyle = color + '44';
       ctx.fill();
       ctx.stroke();
+      if(n.type==='flip'){
+        ctx.fillStyle=color;ctx.font='bold 11px '+getVar('--sans');
+        ctx.fillText(n.direction==='left'?'‹':'›',cx-3,y+4);
+      }
     } else {
       const rw = drawWidth-16, rh = NOTE_H;
       roundRect(ctx, cx-rw/2, y-rh/2, rw, rh, 3);
@@ -343,19 +443,65 @@
        const endY = n.endTick != null ? tickToY(n.endTick) : y + NOTE_H;
        return (Math.max(endY,y) >= viewTop && Math.min(endY,y) <= viewBottom);
     });
+    drawGimmickLinks(visibleNotes);
     visibleNotes.filter(n=>n.type==='scramble').forEach(drawNote);
     visibleNotes.filter(n=>n.type==='hold' || n.type==='shift').forEach(drawNote);
     visibleNotes.filter(n=>n.type!=='hold' && n.type!=='shift' && n.type!=='scramble').forEach(drawNote);
-    const swapsByTick = new Map();
-    visibleNotes.filter(n=>n.type==='swap').forEach(n=>{
-      if(!swapsByTick.has(n.tick)) swapsByTick.set(n.tick,new Set());
-      swapsByTick.get(n.tick).add(n.lane);
-    });
-    ctx.fillStyle = getVar('--swap');
-    ctx.font = 'bold 14px '+getVar('--mono');
-    swapsByTick.forEach((lanes,tick)=>{
-      if(lanes.has(0) && lanes.has(5)) ctx.fillText('↔',laneToX(3)-7,tickToY(tick)-8);
-    });
+    if(pointerMode==='place' && (selectedType==='pair_swap'||selectedType==='flip')){
+      const active=pendingGimmick&&pendingGimmick.type===selectedType?pendingGimmick:null;
+      const tick=active?active.tick:hoverPos?.snappedTick;
+      const start=active?active.slot:hoverPos?.lane;
+      const target=active&&hoverPos?hoverPos.lane:null;
+      if(Number.isInteger(tick)&&start>=0&&start<6){
+        const y=tickToY(tick),x0=laneToX(start)+LANE_W/2;
+        const slots=getLaneMappingBeforeTick(tick).normal;
+        const startLogical=isSwapVisualizeMode?slots[start]:start;
+        const startPhysical=slots.indexOf(startLogical);
+        const targetLogical=target==null?null:isSwapVisualizeMode?slots[target]:target;
+        const targetPhysical=targetLogical==null?-1:slots.indexOf(targetLogical);
+        let reason='',valid=true;
+        if(!active){
+          if(chart.notes.some(n=>n.tick===tick&&n.lane===startLogical))reason='開始位置にノーツあり';
+          else if(chart.notes.some(n=>n.tick===tick&&n.type==='scramble'))reason='Scrambleと同Tick不可';
+          else if(selectedType==='pair_swap'&&chart.notes.some(n=>n.tick===tick&&n.type==='pair_swap'))reason='Pairは同Tickに1組';
+          valid=!reason;
+        }
+        if(active&&target!=null){
+          if(hoverPos.snappedTick!==tick)reason='同じ Tick を選択';
+          else if(target===start)reason='別のレーンを選択';
+          else if(target<0||target>=6)reason='6入力レーン内で選択';
+          else {
+            const id=nextId(), candidate=selectedType==='pair_swap'
+              ?[{id,tick,lane:startLogical,type:'pair_swap'},{id:id+1,tick,lane:targetLogical,type:'pair_swap'}]
+              :[{id,tick,lane:startLogical,type:'flip',direction:targetPhysical<startPhysical?'left':'right',steps:Math.abs(targetPhysical-startPhysical)}];
+            const group=chart.notes.filter(n=>n.tick===tick&&['pair_swap','flip','scramble'].includes(n.type));
+            const result=PairFlipRules.step(slots,[...group,...candidate],tick);
+            if(result.errors.length)reason='移動区間が重複';
+            const touched=new Set(result.footprints.filter(f=>f.ids.includes(id)).flatMap(f=>f.slots));
+            if(!reason&&chart.notes.some(n=>n.tick===tick&&n.type!=='scramble'&&
+              ((selectedType==='pair_swap'&&(n.lane===startLogical||n.lane===targetLogical))||
+               (selectedType==='flip'&&n.lane===startLogical))))reason='開始位置にノーツあり';
+            if(!reason&&chart.notes.some(n=>(n.type==='hold'||n.type==='shift')&&n.tick<=tick&&n.endTick>=tick&&touched.has(slots.indexOf(n.lane))))reason='長押し区間と重複';
+          }
+          valid=!reason;
+        }
+        const color=!valid?getVar('--danger'):selectedType==='flip'?getVar('--flip'):getVar('--swap');
+        if(selectedType==='pair_swap')drawPairPlacementGhost(start,target,y,color);
+        else drawFlipPlacementGhost(start,target,y,color,Math.abs(targetPhysical-startPhysical));
+        ctx.save();
+        ctx.font='12px '+getVar('--sans');
+        const label=active?(reason||(target==null
+          ? `${selectedType==='flip'?'FLIP':'PAIR'} · 移動先を選択`
+          : selectedType==='flip'
+            ? `FLIP · ${targetPhysical<startPhysical?'左':'右'}へ${Math.abs(targetPhysical-startPhysical)}レーン`
+            : `PAIR · レーン${target+1}を相方に`))
+          :(reason||`${selectedType==='flip'?'FLIP':'PAIR'} · 始点を選択`);
+        const labelX=Math.min(laneToX(6)-180,Math.max(RULER_W+6,x0-55));
+        ctx.fillStyle=getVar('--panel-raised');ctx.fillRect(labelX,y-43,180,22);
+        ctx.fillStyle=color;ctx.fillText(label,labelX+8,y-27);
+        ctx.restore();
+      }
+    }
 
     if(drag && drag.mode==='create-hold'){
       ctx.globalAlpha = 0.6;
@@ -373,7 +519,10 @@
       ctx.strokeRect(x0,y0,x1-x0,y1-y0);
     }
 
-    if(hoverPos && pointerMode === 'place'){
+    if(hoverPos && pointerMode === 'place' && selectedType==='scramble'){
+      drawScramblePlacementGhost(hoverPos.snappedTick);
+    }
+    if(hoverPos && pointerMode === 'place' && !['pair_swap','flip','scramble'].includes(selectedType)){
       const y = tickToY(hoverPos.snappedTick);
       ctx.strokeStyle = getVar('--text-dim');
       ctx.lineWidth = 1;

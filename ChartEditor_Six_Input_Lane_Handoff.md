@@ -1,5 +1,7 @@
 # 譜面エディタ引き継ぎ仕様：6入力レーンと Swap / Scramble
 
+> この文書は v1 旧エディタ用の履歴です。v2 の Pair Swap / Flip 追加仕様は [Pair_Flip_Chart_Contract_v2.md](Pair_Flip_Chart_Contract_v2.md) を参照してください。
+
 更新日：2026-10-19
 対象：Re-Inverse の外部譜面エディタが読み書きする MusicPackages 譜面 JSON（RICF-1 / `version: 1`）
 

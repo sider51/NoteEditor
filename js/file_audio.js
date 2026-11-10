@@ -207,12 +207,12 @@
     }
     notes.sort((a,b) => a.tick - b.tick || a.lane - b.lane);
     notes.forEach((note, index) => { note.id = index + 1; });
-    return ReInverseChartFormat.createChartExport({version:1, metadata, timing, notes, events:[]});
+    return ReInverseChartFormat.createChartExport({version:2, metadata, timing, notes, events:[]});
   }
 
   function createNewChart(){
     const data = {
-      version: 1,
+      version: 2,
       metadata: {
         charter: "",
         difficulty: { level: 1 },
@@ -234,6 +234,20 @@
   
   async function loadChart(data, name){
     if(!data || typeof data !== 'object'){ showAppMessage('不正なJSONです'); return; }
+    if(data.version !== 2 || (Array.isArray(data.notes)&&data.notes.some(n=>n.type==='swap'))){
+      if(data.version===1){
+        const openOld=await showAppConfirm('この譜面は v1 です。旧エディタを別画面で開きますか？ 新エディタでは v1 を保存できません。','旧譜面','旧エディタで開く');
+        if(openOld){
+          if(typeof require==='function'){
+            try{require('electron').ipcRenderer.send('open-legacy-chart',{data,name});return;}catch{}
+          }
+          const popup=window.open('old-editor/index.html','noteeditor-old');
+          if(!popup) showAppMessage('ポップアップがブロックされました。old-editor/index.html を開いてください。');
+          else { const payload={kind:'noteeditor-v1-open',data,name}; const send=()=>popup.postMessage(payload,location.origin); popup.addEventListener('load',send,{once:true}); setTimeout(send,800); }
+        }
+      } else showAppMessage('この形式は v2 エディタでは開けません。');
+      return;
+    }
     if(!Array.isArray(data.notes)) data.notes = [];
     if(!data.metadata) data.metadata = {};
     if(!data.timing) data.timing = {};
@@ -248,6 +262,8 @@
     data.metadata.resolution = rawResolution;
 
     chart = data;
+    pendingGimmick=null;
+    lastMutatorHash='';laneStateHistory=[];
     filename = name || 'chart.json';
     laneCount = 6;
     resolution = Number.isInteger(rawResolution) && rawResolution > 0 ? rawResolution : 960;
@@ -576,7 +592,7 @@
   // ---------------------------------------------------------------
   // Export
   // ---------------------------------------------------------------
-  function chartExportJson(){ normalizeChartTiming(chart.timing); return JSON.stringify(ReInverseChartFormat.createChartExport(chart), null, 2); }
+  function chartExportJson(){ return JSON.stringify(ReInverseChartFormat.createChartExport(chart), null, 2); }
   function exportIssues(){
     return validateChartSyntax().filter(issue =>
       !issue.startsWith('MusicPackage') && !issue.startsWith('package_key') &&
@@ -604,9 +620,9 @@
     try {const info=ReInverseChartFormat.difficultyInfo(selectedChartDifficulty),charts=await packageContext.rootHandle.getDirectoryHandle('charts',{create:true}),file=await charts.getFileHandle(info.fileName,{create:true}),writable=await file.createWritable();await writable.write(chartExportJson());await writable.close();filename=info.fileName;el.filenameLabel.textContent=filename;showAppToast('charts/'+info.fileName+' へ保存しました。');}catch(err){if(err&&err.name!=='AbortError')showAppMessage('MusicPackageへの保存に失敗しました: '+err.message);}
   }
   function confirmScrambleCompatibility(){
-    const ticks=findScrambleOverlapTicks();
+    const ticks=PairFlipRules.eventsAt(chart.notes).filter(([,group])=>group.filter(n=>n.type==='flip').length>1 || (group.some(n=>n.type==='flip')&&group.some(n=>n.type==='pair_swap'))).map(([tick])=>tick);
     if(!ticks.length) return Promise.resolve(true);
-    return showAppConfirm(`Scramble と通常ノーツが同 Tick (${ticks.join(', ')}) にあります。現在の Unity はこの譜面を読み込めません。互換性未対応のまま保存しますか？`,'Unity 互換性警告','保存する');
+    return showAppConfirm(`同 Tick の複数 Flip / Pair との共存 (${ticks.join(', ')}) は現在の Unity に未対応です。保存しますか？`,'Unity 互換性警告','保存する');
   }
   async function downloadChart(){
     if(!chart)return;

@@ -12,7 +12,8 @@
     tap:   { color: getVar('--tap'),   label:'TAP',   hasEnd:false },
     hold:  { color: getVar('--hold'),  label:'HOLD',  hasEnd:true  },
     trace: { color: getVar('--trace'), label:'TRACE', hasEnd:false },
-    swap:  { color: getVar('--swap'),  label:'SWAP',  hasEnd:false },
+    pair_swap:  { color: getVar('--swap'),  label:'PAIR',  hasEnd:false },
+    flip: { color: getVar('--flip'), label:'FLIP', hasEnd:false },
     shift:    { color: getVar('--shift'),    label:'SHIFT',    hasEnd:true  },
     scramble: { color: getVar('--scramble'), label:'SCRAMBLE', hasEnd:false },
   };
@@ -27,6 +28,8 @@
   const HINTS = {
     place: [
       ['配置', '空セルをクリック'],
+      ['PAIR / FLIP', '始点と相手・移動先を順にクリック'],
+      ['後続維持', 'Shiftを押してギミックを配置'],
       ['HOLD配置', 'ドラッグ'],
       ['移動', 'ノーツをドラッグ'],
       ['削除', '右クリック / Del'],

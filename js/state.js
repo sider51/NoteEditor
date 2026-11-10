@@ -9,7 +9,7 @@
   let isSwapVisualizeMode = false;
   let isTimelineInverted = false;
   let laneStateHistory = [];
-  const SUPPORTED_NOTE_TYPES = new Set(['tap','hold','trace','swap','shift','scramble']);
+  const SUPPORTED_NOTE_TYPES = new Set(['tap','hold','trace','pair_swap','flip','shift','scramble']);
 
   let lastMutatorHash = "";
   function createLaneMapping(){
@@ -40,29 +40,15 @@
   function rebuildLaneStates() {
     if (!chart || !chart.notes) return;
     
-    const mutators = chart.notes.filter(n => n.type === 'swap' || n.type === 'scramble');
+    const mutators = chart.notes.filter(n => n.type === 'pair_swap' || n.type === 'flip' || n.type === 'scramble');
     let hash = "";
     for (let i = 0; i < mutators.length; i++) {
-      hash += mutators[i].id + ":" + mutators[i].type + ":" + mutators[i].tick + ":" + mutators[i].lane + ",";
+      hash += mutators[i].id + ":" + mutators[i].type + ":" + mutators[i].tick + ":" + mutators[i].lane + ":" + mutators[i].direction + ":" + mutators[i].steps + ",";
     }
     if (hash === lastMutatorHash && laneStateHistory.length > 0) return;
     lastMutatorHash = hash;
     
-    laneStateHistory = [];
-    let current = createLaneMapping();
-    laneStateHistory.push({ tick: -1, mapping: cloneLaneMapping(current) });
-    
-    mutators.sort(compareGameOrder);
-    
-    for(let i=0;i<mutators.length;){
-      const tick = mutators[i].tick;
-      const atTick = [];
-      while(i<mutators.length && mutators[i].tick===tick) atTick.push(mutators[i++]);
-      if(atTick.some(n=>n.type==='scramble')) applyScrambleMapping(current);
-      else if(atTick.some(n=>n.type==='swap' && n.lane===0) && atTick.some(n=>n.type==='swap' && n.lane===5)) swapVisualPositions(current,2,3,'normal');
-      else atTick.filter(n=>n.type==='swap').forEach(n=>applySwapMapping(current,n.lane));
-      laneStateHistory.push({tick, mapping:cloneLaneMapping(current)});
-    }
+    laneStateHistory = PairFlipRules.timeline(mutators).history.map(item=>({tick:item.tick,mapping:{normal:item.after,noSwap:item.after}}));
   }
 
   function getLaneMappingAt(tick, includeCurrentTick) {
@@ -106,7 +92,7 @@
     if(!Number.isInteger(lane) || lane < 0 || lane > 6) return false;
     if(type === 'scramble') return lane === 6;
     if(lane === 6) return false;
-    if(type === 'swap' && lane !== 0 && lane !== 5) return false;
+    if(!SUPPORTED_NOTE_TYPES.has(type)) return false;
     return true;
   }
 
@@ -151,7 +137,7 @@
   function validateChartSyntax(){
     const errors = [];
     if(!chart || !chart.metadata || !chart.timing) return ['譜面データが不完全です。'];
-    if(chart.version !== 1) errors.push('version は 1 である必要があります。');
+    if(chart.version !== 2) errors.push('version は 2 である必要があります。');
     if(chart.metadata.laneCount !== 7) errors.push('laneCount は 7 である必要があります。');
     if(typeof chart.metadata.charter !== 'string' || chart.metadata.charter.trim() === '') errors.push('metadata.charter は空にできません。');
     const difficultyLevel = Number(chart.metadata.difficulty && chart.metadata.difficulty.level);
@@ -176,8 +162,10 @@
     const scrambleTicks = new Set((chart.notes||[]).filter(n=>n.type==='scramble').map(n=>n.tick));
     const ordinaryCountByTick = new Map();
     (chart.notes||[]).filter(n=>n.type!=='scramble').forEach(n=>ordinaryCountByTick.set(n.tick,(ordinaryCountByTick.get(n.tick)||0)+1));
-    scrambleTicks.forEach(tick=>{if((ordinaryCountByTick.get(tick)||0)>5) errors.push(`Tick ${tick} のSCRAMBLEには空き入力レーンが必要です。`);});
+    scrambleTicks.forEach(tick=>{if((ordinaryCountByTick.get(tick)||0)>0) errors.push(`Tick ${tick} のSCRAMBLEと他ノーツは共存できません。`);});
     rebuildLaneStates();
+    errors.push(...PairFlipRules.timeline(chart.notes).errors);
+    errors.push(...validateGimmickNotes(chart.notes));
     (chart.notes||[]).forEach(note => {
       if(!Number.isInteger(note.id) || ids.has(note.id)) errors.push(`ノーツID ${note.id} が重複または不正です。`);
       ids.add(note.id);
@@ -204,6 +192,32 @@
       });
     });
     if(findHoldCrossingScramble()) errors.push('SCRAMBLEをまたぐHOLDまたはSHIFTがあります。');
+    return [...new Set(errors)];
+  }
+  function validateGimmickNotes(notes){
+    const line=PairFlipRules.timeline(notes),errors=line.errors.slice(),byTick=new Map();
+    const mirrorNotes=notes.map(n=>n.type==='scramble'?n:{...n,lane:PairFlipRules.isLane(n.lane)?5-n.lane:n.lane,
+      ...(n.type==='flip'?{direction:n.direction==='left'?'right':n.direction==='right'?'left':n.direction}:{})});
+    errors.push(...PairFlipRules.timeline(mirrorNotes).errors.map(e=>`Mirror: ${e}`));
+    for(const n of notes){if(!byTick.has(n.tick))byTick.set(n.tick,[]);byTick.get(n.tick).push(n);}
+    for(const [tick,group] of byTick){
+      if(group.some(n=>n.type==='scramble') && group.length!==1)errors.push(`Tick ${tick}: Scramble は他ノーツと同時に置けません。`);
+      const slots=PairFlipRules.before(line.history,tick),occupied=new Set();
+      for(const n of group){
+        if(n.type==='scramble')continue;
+        const slot=slots.indexOf(n.lane);
+        if(slot<0 || occupied.has(slot))errors.push(`ID ${n.id} / Tick ${tick}: 開始レーンが重複しています。`);
+        occupied.add(slot);
+      }
+    }
+    for(const event of line.history.slice(1)){
+      const touched=new Set((event.footprints||[]).flatMap(f=>f.slots));
+      if(notes.some(n=>n.type==='scramble'&&n.tick===event.tick))for(let i=0;i<6;i++)touched.add(i);
+      for(const n of notes)if((n.type==='hold'||n.type==='shift')&&n.tick<=event.tick&&n.endTick>=event.tick){
+        const slot=event.before.indexOf(n.lane);
+        if(touched.has(slot))errors.push(`ID ${n.id} / Tick ${event.tick}: Hold / Shift の判定区間でレーンが移動します。`);
+      }
+    }
     return [...new Set(errors)];
   }
   function validateTimingEvents(){
@@ -249,11 +263,11 @@
       !issue.startsWith('metadata/songdata') && !issue.startsWith('出力難易度')
     );
     const packageErrors = validatePackageContext();
-    const overlapTicks=findScrambleOverlapTicks();
+    const overlapTicks=PairFlipRules.eventsAt(chart.notes).filter(([,group])=>group.filter(n=>n.type==='flip').length>1 || (group.some(n=>n.type==='flip')&&group.some(n=>n.type==='pair_swap'))).map(([tick])=>tick);
     const summary=errors.length ? `問題 ${errors.length} 件\n${errors.slice(0,20).join('\n')}${errors.length>20?`\nほか ${errors.length-20} 件`:''}` : '構文上の問題はありません。';
     document.getElementById('validationResults').textContent=summary+
       (packageErrors.length ? `\n\n保存先の確認: ${packageErrors.join(' / ')}` : '')+
-      (overlapTicks.length ? `\n\nUnity 互換性警告: Scramble と他ノーツが同 Tick にあります (${overlapTicks.join(', ')}). 現在の Unity はこの譜面を読み込めません。` : '');
+      (overlapTicks.length ? `\n\nUnity 互換性警告: 同 Tick の複数 Flip / Pair との共存 (${overlapTicks.join(', ')}) は現在の Unity に未対応です。` : '');
   }
   function findScrambleOverlapTicks(){
     if(!chart) return [];
@@ -266,6 +280,7 @@
   let zoom = 1.0;
   let snapN = 16;
   let selectedType = 'tap';
+  let pendingGimmick = null;
   let pointerMode = 'place'; // 'place' | 'select'
   let selectedIds = new Set();
   let lastClickedId = null;
@@ -287,7 +302,7 @@
   // 削除されたフィールド (m_subtitle, m_genre, m_previewStart, m_previewDuration) をリストから除外
   const el = {};
   ['fileInput','btnLoad','btnLoad2','btnNew','btnPackage','btnExport','btnDownload','btnMeta','btnAudio','audioInput',
-   'btnUndo','btnRedo','snapSelect','btnSettings','swapVisualizeToggle','timelineInvertToggle','zoomIn','zoomOut','zoomLabel','filenameLabel','packageDifficulty',
+   'btnUndo','btnRedo','snapSelect','btnSettings','swapVisualizeToggle','preserveVisualToggle','timelineInvertToggle','zoomIn','zoomOut','zoomLabel','filenameLabel','packageDifficulty',
    'btnFileMenu','fileMenu','btnInspectorToggle','inspectorPanel',
    'gridArea','emptyState','laneHeader','scrollWrap','gridCanvas','metaStats','noteCounts','packageLabel',
    'inspector','statTick','statBeat','statLane','statCount','statLength','hintBody','hintTitle',

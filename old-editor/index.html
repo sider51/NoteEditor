@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NoteEditor</title>
+<!-- アイコンライブラリ（Material Symbols）の読み込み -->
+<link href="../js/vendor/material-symbols.css" rel="stylesheet" />
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="app-header">
+  <div class="command-bar">
+    <nav class="menu-bar" aria-label="エディタメニュー">
+      <div class="menu-shell file-menu-shell">
+        <button id="btnFileMenu" class="menu-trigger" aria-haspopup="true" aria-expanded="false" aria-controls="fileMenu">ファイル</button>
+        <div class="file-menu app-menu" id="fileMenu" hidden>
+          <button id="btnNew">新規作成</button>
+          <button id="btnLoad">譜面を開く</button>
+          <button id="btnPackage">MusicPackageを選択</button>
+          <button data-command="audio">音声を読み込む</button>
+          <div class="menu-separator"></div>
+          <button data-command="save">MusicPackageへ保存</button>
+          <button id="btnDownload">JSONを保存</button>
+        </div>
+      </div>
+      <div class="menu-shell">
+        <button id="btnEditMenu" class="menu-trigger" aria-haspopup="true" aria-expanded="false" aria-controls="editMenu">編集</button>
+        <div class="app-menu" id="editMenu" hidden>
+          <button data-command="undo">元に戻す <kbd>Ctrl+Z</kbd></button>
+          <button data-command="redo">やり直し <kbd>Ctrl+Y</kbd></button>
+          <div class="menu-separator"></div>
+          <button data-command="copy">選択をコピー <kbd>Ctrl+C</kbd></button>
+          <button data-command="paste">貼り付け <kbd>Ctrl+V</kbd></button>
+          <button data-command="mirror">選択を左右反転 <kbd>M</kbd></button>
+          <button data-command="delete">選択を削除 <kbd>Delete</kbd></button>
+        </div>
+      </div>
+      <div class="menu-shell">
+        <button id="btnChartMenu" class="menu-trigger" aria-haspopup="true" aria-expanded="false" aria-controls="chartMenu">譜面</button>
+        <div class="app-menu" id="chartMenu" hidden>
+          <button id="btnMeta" disabled>譜面情報・メタデータ</button>
+          <button id="btnTiming" disabled>BPM・Scroll</button>
+          <div class="menu-separator"></div>
+          <button data-command="syntax">構文チェック</button>
+          <button data-command="simulator">Swap Simulator</button>
+        </div>
+      </div>
+      <div class="menu-shell">
+        <button id="btnViewMenu" class="menu-trigger" aria-haspopup="true" aria-expanded="false" aria-controls="viewMenu">表示</button>
+        <div class="app-menu" id="viewMenu" hidden>
+          <button data-command="inspector">情報パネルを開閉</button>
+          <button data-command="swap-visualize">Swap Visualize</button>
+          <button data-command="invert">譜面を上下反転</button>
+          <button data-command="zoom-in">拡大</button>
+          <button data-command="zoom-out">縮小</button>
+          <button data-command="preview">速度プレビュー</button>
+          <div class="menu-separator"></div>
+          <button id="btnSettings">設定</button>
+        </div>
+      </div>
+    </nav>
+    <input type="file" id="fileInput" accept="application/json,.json,application/zip,.mcz">
+    <div class="spacer"></div>
+    <span class="filename" id="filenameLabel">未読み込み</span>
+    <span class="package-label" id="packageLabel">MusicPackage未選択</span>
+    <label class="package-difficulty">難易度<select id="packageDifficulty" title="出力難易度"><option value="low">LOW</option><option value="mid">MID</option><option value="high" selected>HIGH</option><option value="sp">SP</option></select></label>
+    <button id="btnExport" class="primary" title="選択済みMusicPackageへ保存" disabled><span class="material-symbols-outlined">save</span>保存</button>
+    <div class="history-actions">
+      <button id="btnUndo" class="icon-button" title="元に戻す" aria-label="元に戻す" disabled><span class="material-symbols-outlined">undo</span></button>
+      <button id="btnRedo" class="icon-button" title="やり直し" aria-label="やり直し" disabled><span class="material-symbols-outlined">redo</span></button>
+    </div>
+    <button id="btnInspectorToggle" title="情報パネルを開閉" aria-controls="inspectorPanel" aria-expanded="false"><span class="material-symbols-outlined">side_navigation</span>情報</button>
+  </div>
+  <div class="tool-bar">
+    <div class="mode-switch" role="group" aria-label="編集モード">
+      <button class="mode-btn active" data-mode="place" id="modePlace" title="配置モード"><span class="material-symbols-outlined">edit</span>配置</button>
+      <button class="mode-btn" data-mode="select" id="modeSelect" title="選択モード"><span class="material-symbols-outlined">highlight_alt</span>選択</button>
+    </div>
+    <div class="tool-divider"></div>
+    <div class="note-tools" role="group" aria-label="ノーツの種類">
+      <button class="type-btn active" data-type="tap"><span class="dot" style="background:var(--tap)"></span>TAP<kbd>1</kbd></button>
+      <button class="type-btn" data-type="hold"><span class="dot" style="background:var(--hold)"></span>HOLD<kbd>2</kbd></button>
+      <button class="type-btn" data-type="trace"><span class="dot" style="background:var(--trace)"></span>TRACE<kbd>3</kbd></button>
+      <button class="type-btn" data-type="swap"><span class="dot" style="background:var(--swap)"></span>SWAP<kbd>4</kbd></button>
+      <button class="type-btn" data-type="shift"><span class="dot" style="background:var(--shift)"></span>SHIFT<kbd>5</kbd></button>
+      <button class="type-btn" data-type="scramble"><span class="dot" style="background:var(--scramble)"></span>SCRAMBLE<kbd>6</kbd></button>
+    </div>
+    <div class="spacer"></div>
+    <label class="snap-control">SNAP<select id="snapSelect"></select></label>
+    <div class="zoom-group" role="group" aria-label="ズーム">
+      <button id="zoomOut" class="icon-button" title="縮小" aria-label="縮小"><span class="material-symbols-outlined">remove</span></button>
+      <span id="zoomLabel">100%</span>
+      <button id="zoomIn" class="icon-button" title="拡大" aria-label="拡大"><span class="material-symbols-outlined">add</span></button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="grid-area" id="gridArea">
+    <div class="empty-state" id="emptyState">
+      <div class="glyph">譜面を開く</div>
+      <p>JSON または MCZ ファイルを読み込んでください</p>
+      <button id="btnLoad2" class="primary"><span class="material-symbols-outlined">folder_open</span> チャートを読み込み</button>
+    </div>
+    <div class="editor-main-container" id="editorMainContainer" style="display:none;">
+      <div class="editor-lane-stack">
+        <div class="lane-header" id="laneHeader" style="display:none;"></div>
+        <div class="scroll-wrap" id="scrollWrap">
+          <canvas id="gridCanvas"></canvas>
+        </div>
+      </div>
+      <div class="minimap-wrap" id="minimapWrap">
+        <canvas id="minimapCanvas"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <aside id="inspectorPanel" aria-label="譜面情報パネル">
+    <div class="section inspector-section">
+      <h3>選択中</h3>
+      <div id="inspector"><p class="placeholder">ノーツをクリックして選択</p></div>
+    </div>
+    <details class="section info-section" open>
+      <summary>譜面情報</summary>
+      <div id="metaStats"><p class="placeholder">未読み込み</p></div>
+    </details>
+    <details class="section info-section">
+      <summary>ノーツ数</summary>
+      <div id="noteCounts" class="count-grid"></div>
+    </details>
+    <details class="section info-section">
+      <summary id="hintTitle">操作（配置モード）</summary>
+      <div id="hintBody"></div>
+    </details>
+  </aside>
+</main>
+
+<div class="transport disabled" id="transport">
+  <button class="playbtn icon-button" id="btnPlayPause" title="再生・停止" aria-label="再生・停止" disabled><span class="material-symbols-outlined">play_arrow</span></button>
+  <span class="time" id="timeLabel">00:00 / 00:00</span>
+  <input type="range" id="seekBar" min="0" max="1000" value="0" step="1" disabled aria-label="再生位置">
+  <select id="playbackRateSelect" title="再生速度" disabled>
+    <option value="0.25">0.25x</option><option value="0.5">0.5x</option><option value="0.75">0.75x</option>
+    <option value="1.0" selected>1.0x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option>
+  </select>
+  <span class="filename" id="audioFileLabel">音声未読み込み</span>
+  <button id="btnAudio" title="音声読み込み" disabled><span class="material-symbols-outlined">audio_file</span>音声</button>
+  <input type="file" id="audioInput" accept="audio/*">
+  <button id="btnPreview" title="Scroll 再生プレビュー" disabled><span class="material-symbols-outlined">visibility</span>速度プレビュー</button>
+</div>
+
+<footer>
+  <span>Tick: <span class="highlight" id="statTick">-</span></span>
+  <div class="sep"></div>
+  <span>Beat: <span class="highlight" id="statBeat">-</span></span>
+  <div class="sep"></div>
+  <span>Lane: <span class="highlight" id="statLane">-</span></span>
+  <div class="sep"></div>
+  <span>Notes: <span class="highlight" id="statCount">0</span></span>
+  <div class="sep"></div>
+  <span>Length: <span class="highlight" id="statLength">-</span> ticks</span>
+</footer>
+
+<!-- Metadata modal (不要になったフィールドを削除) -->
+<div class="modal-overlay" id="metaModalOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="metaModalTitle">
+    <h2 id="metaModalTitle">メタデータ編集</h2>
+
+    <div class="field-group">
+      <h4>譜面情報</h4>
+      <div class="field-row"><label>譜面制作者<input type="text" id="m_charter"></label></div>
+    </div>
+
+    <div class="field-group">
+      <h4>難易度</h4>
+      <div class="field-row">
+        <label>難易度数値<input type="number" id="m_diffLevel" min="0" step="0.01"></label>
+      </div>
+    </div>
+      <p class="modal-help">難易度名はJSONに保存しません。パッケージ保存時のファイル名が難易度を定義します。</p>
+
+    <div class="field-group">
+      <h4>タイミング（Tick 0）</h4>
+      <div class="field-row">
+        <label>BPM<input type="number" id="m_bpm" min="0.001" step="any"></label>
+        <label>拍子・分子<input type="number" id="m_timeSigNumerator" min="1" step="1"></label>
+        <label>拍子・分母<input type="number" id="m_timeSigDenominator" min="1" step="1"></label>
+      </div>
+    </div>
+
+    <div class="field-group">
+      <h4>音声</h4>
+      <div class="field-row">
+        <label>オフセット (ms)<input type="number" id="m_audioOffset"></label>
+      </div>
+    </div>
+
+    <div class="field-group">
+      <h4>小節線プレビュー</h4>
+      <div class="field-row">
+        <label>小節線オフセット（1/x 音符単位）<input type="number" id="m_gridOffset" step="1" inputmode="numeric"></label>
+      </div>
+      <p class="modal-help">4/4: -1 = 4分音符1つ前、1 = 4分音符1つ後。小節線の表示位相だけを変え、音源・判定は動かしません。</p>
+    </div>
+
+    <div class="field-group">
+      <h4>構成</h4>
+      <div class="field-row">
+        <label>解像度 (Tick/拍)<input type="number" id="m_resolution"></label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="metaCancel">キャンセル</button>
+      <button id="metaSave" class="primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Display / Swap settings modal -->
+<div class="modal-overlay" id="settingsModalOverlay">
+  <div class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+    <h2 id="settingsModalTitle">設定</h2>
+    <div class="settings-grid">
+      <section class="settings-pane">
+      <h3>表示</h3>
+      <label class="toggle-row">
+        <input type="checkbox" id="swapVisualizeToggle">
+        <span>SWAP VISUALIZE</span>
+        <small>SWAP / SCRAMBLE後のレーン位置でノーツを表示・配置します。</small>
+      </label>
+      <label class="toggle-row">
+        <input type="checkbox" id="timelineInvertToggle">
+        <span>譜面を上下反転</span>
+        <small>編集、波形、ミニマップ、再生時の追従方向を上向きにします。</small>
+      </label>
+      </section>
+      <section class="settings-pane">
+      <h3>検証と変換</h3>
+      <p class="modal-help">SWAP適用後の見た目で作成してしまった譜面を、ゲームで同じ見た目になる元レーン配置へ変換します。</p>
+      <button id="btnSwapSimulator" class="danger-outline"><span class="material-symbols-outlined">swap_horiz</span>SWAP SIMULATORを実行</button>
+      <button id="btnSyntaxCheck"><span class="material-symbols-outlined">fact_check</span>構文チェック</button>
+      <div id="validationResults" class="validation-results" role="status" aria-live="polite">構文チェックを実行すると結果を表示します。</div>
+      </section>
+    </div>
+    <div class="actions">
+      <button id="settingsClose" class="primary">閉じる</button>
+    </div>
+  </div>
+</div>
+
+
+<div class="modal-overlay" id="timingModalOverlay">
+  <div class="modal timing-modal" role="dialog" aria-modal="true" aria-labelledby="timingModalTitle">
+    <h2 id="timingModalTitle">BPM・Scroll イベント</h2>
+    <p class="modal-help">Tick 0 の BPM は必須です。Scroll は省略すると 1.0 倍です。フェードでは終了 Tick に目標倍率へ到達します。</p>
+    <div id="timingRows"></div>
+    <div class="timing-add"><button id="timingAddBpm">BPM を追加</button><button id="timingAddScroll">Scroll を追加</button></div>
+    <div class="actions"><button id="timingCancel">キャンセル</button><button id="timingSave" class="primary">適用</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="previewModalOverlay">
+  <div class="modal preview-modal" role="dialog" aria-modal="true" aria-labelledby="previewModalTitle">
+    <h2 id="previewModalTitle">Scroll 再生プレビュー</h2>
+    <p class="modal-help">BPM と Scroll を反映した通常ノーツ・小節線の位置です。Shift / Scramble の速度演出は含みません。</p>
+    <canvas id="previewCanvas" width="520" height="500"></canvas>
+    <div class="actions"><button id="previewClose" class="primary">閉じる</button></div>
+  </div>
+</div>
+
+<audio id="audioEl"></audio>
+
+<div class="modal-overlay" id="appDialogOverlay">
+  <div class="modal app-dialog" role="alertdialog" aria-modal="true" aria-labelledby="appDialogTitle" aria-describedby="appDialogMessage">
+    <h2 id="appDialogTitle"></h2>
+    <p id="appDialogMessage"></p>
+    <div class="actions"><button id="appDialogCancel" hidden>キャンセル</button><button id="appDialogAccept" class="primary">OK</button></div>
+  </div>
+</div>
+<div id="appToast" class="app-toast" role="status" aria-live="polite"></div>
+
+<script src="../js/vendor/package/dist/jszip.min.js"></script>
+<script src="js/chart_format.js"></script>
+<script src="js/config.js"></script>
+<script src="js/dialogs.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/math.js"></script>
+  <script src="js/renderer.js"></script>
+  <script src="js/editor.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/file_audio.js"></script>
+  <script src="js/timing_ui.js"></script>
+  <script src="js/input.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
